@@ -1,3 +1,18 @@
+import os, threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
+
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b'OK')
+
+def run_server():
+    port = int(os.environ.get('PORT', 10000))
+    HTTPServer(('0.0.0.0', port), HealthHandler).serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
+
 import datetime
 import sqlite3
 import requests
@@ -332,7 +347,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_markdown(f"💱 *1 {sym}* = ₹{val:.2f} INR")
             else:
                 await update.message.reply_text("Currency not recognized.")
-        except Exception:
+    except Exception as e:
             await update.message.reply_text("❌ Exchange API currently unavailable.")
 
     elif mode == "carrier":
@@ -344,7 +359,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_markdown(f"📞 *Carrier Info:*\n• Valid: ✅\n• Operator: {c_name}\n• Circle: {reg}")
             else:
                 await update.message.reply_text("❌ Invalid phone number.")
-        except Exception:
+    except Exception as e:
             await update.message.reply_text("❌ Please include country code (+91).")
 
     elif mode == "imei":
@@ -386,7 +401,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             r = requests.head(target, allow_redirects=True, timeout=5)
             await update.message.reply_markdown(f"🛡 *URL Audit:*\n• Final URL: `{r.url}`\n• HTTP Status: `{r.status_code}`\n• Status: ✅ Reachable")
-        except Exception:
+    except Exception as e:
             await update.message.reply_text("⚠️ Target URL failed to respond or is unreachable.")
 
     elif mode == "dns":
@@ -394,7 +409,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             answers = dns.resolver.resolve(query, 'A')
             ips = [rdata.to_text() for rdata in answers]
             await update.message.reply_markdown(f"📡 *DNS A-Records for `{query}`:*\n" + "\n".join([f"• `{ip}`" for ip in ips]))
-        except Exception:
+    except Exception as e:
             await update.message.reply_text("❌ Could not resolve DNS records for this domain.")
 
 # ----------------- PAYMENT CALLBACKS & PROOFS -----------------
@@ -423,7 +438,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "3. Send the screenshot right here in this chat.\n\n"
         "⏳ *Admin will verify and upgrade your account immediately!*"
     )
-    await query.edit_message_text(msg, parse_mode="Markdown")
+    await query.edit_message_text(msg, # parse_mode removed)
 
 async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -451,7 +466,7 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"🔔 *PAYMENT RECEIVED!*\n\n• User: {user_name} (@{username})\n• ID: `{user_id}`\n• Plan: ₹{plan}"
 
         if ADMIN_ID:
-            await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_btns), parse_mode="Markdown")
+            await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_btns), # parse_mode removed)
 
         await update.message.reply_markdown("✅ *Payment screenshot received!* It has been sent to the admin for verification.")
     else:
@@ -483,15 +498,7 @@ async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.commit()
         conn.close()
 
-        await query.edit_message_caption(caption=f"✅ *Approved!* User `{target_uid}` upgraded for {days} days.", parse_mode="Markdown")
-        try:
-            await context.bot.send_message(
-                chat_id=target_uid,
-                text=f"🎉 *Payment Verified!*\nYou are now upgraded to *VIP Premium* for {days} days with unlimited access!",
-                parse_mode="Markdown"
-            )
-        except Exception:
-            pass
+        await query.edit_message_caption(caption=f"✅ *Approved!* User `{targe
 
     elif data.startswith("rej_"):
         target_uid = int(data.split("_")[1])
@@ -501,15 +508,15 @@ async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.commit()
         conn.close()
 
-        await query.edit_message_caption(caption=f"❌ *Declined.* User `{target_uid}` rejected.", parse_mode="Markdown")
+        await query.edit_message_caption(caption=f"❌ *Declined.* User `{target_uid}` rejected.", # parse_mode removed)
         try:
             await context.bot.send_message(
                 chat_id=target_uid,
                 text="❌ *Payment Rejected.* Verification could not be completed. Contact the owner via 📩 CONTACT OWNER.",
-                parse_mode="Markdown"
+                # parse_mode removed
             )
-        except Exception:
-            pass
+    except Exception as e:
+        print(f"Failed sending approval message to user: {e}")
 
 # ----------------- MAIN INITIALIZER -----------------
 if __name__ == "__main__":
