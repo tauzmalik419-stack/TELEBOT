@@ -347,7 +347,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_markdown(f"💱 *1 {sym}* = ₹{val:.2f} INR")
             else:
                 await update.message.reply_text("Currency not recognized.")
-    except Exception as e:
+        except Exception as e:
             await update.message.reply_text("❌ Exchange API currently unavailable.")
 
     elif mode == "carrier":
@@ -359,7 +359,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_markdown(f"📞 *Carrier Info:*\n• Valid: ✅\n• Operator: {c_name}\n• Circle: {reg}")
             else:
                 await update.message.reply_text("❌ Invalid phone number.")
-    except Exception as e:
+        except Exception as e:
             await update.message.reply_text("❌ Please include country code (+91).")
 
     elif mode == "imei":
@@ -401,16 +401,16 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             r = requests.head(target, allow_redirects=True, timeout=5)
             await update.message.reply_markdown(f"🛡 *URL Audit:*\n• Final URL: `{r.url}`\n• HTTP Status: `{r.status_code}`\n• Status: ✅ Reachable")
-    except Exception as e:
-            await update.message.reply_text("⚠️ Target URL failed to respond or is unreachable.")
+        except Exception as e:
+        await update.message.reply_text("⚠️ Target URL failed to respond or is unreachable.")
 
     elif mode == "dns":
         try:
             answers = dns.resolver.resolve(query, 'A')
             ips = [rdata.to_text() for rdata in answers]
             await update.message.reply_markdown(f"📡 *DNS A-Records for `{query}`:*\n" + "\n".join([f"• `{ip}`" for ip in ips]))
-    except Exception as e:
-            await update.message.reply_text("❌ Could not resolve DNS records for this domain.")
+        except Exception as e:
+        await update.message.reply_text("❌ Could not resolve DNS records for this domain.")
 
 # ----------------- PAYMENT CALLBACKS & PROOFS -----------------
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -515,7 +515,7 @@ async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
                 text="❌ *Payment Rejected.* Verification could not be completed. Contact the owner via 📩 CONTACT OWNER.",
                 # parse_mode removed
             )
-    except Exception as e:
+        except Exception as e:
         print(f"Failed sending approval message to user: {e}")
 
 # ----------------- MAIN INITIALIZER -----------------
