@@ -7,6 +7,7 @@ import requests
 import dns.resolver
 import phonenumbers
 from phonenumbers import geocoder, carrier
+import asyncio
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.ext import (
     ApplicationBuilder,
@@ -27,7 +28,6 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.send_response(200)
-        self.send_header('Content-type', 'text/plain')
         self.end_headers()
 
 def run_server():
@@ -201,6 +201,44 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_markdown(
         f"👋 *Welcome, {user.first_name}!*",
         reply_markup=ReplyKeyboardMarkup(MENU_MAIN, resize_keyboard=True)
+    )
+
+async def broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+
+    if not context.args:
+        await update.message.reply_text("⚠️ Usage: `/broadcast Your message here`", parse_mode="Markdown")
+        return
+
+    broadcast_text = " ".join(context.args)
+
+    conn = sqlite3.connect(DB_FILE)
+    c = conn.cursor()
+    c.execute("SELECT user_id FROM users")
+    users = c.fetchall()
+    conn.close()
+
+    total = len(users)
+    success = 0
+    failed = 0
+
+    status_msg = await update.message.reply_text(f"🚀 Broadcasting message to {total} users...")
+
+    for (uid,) in users:
+        try:
+            await context.bot.send_message(chat_id=uid, text=broadcast_text)
+            success += 1
+            await asyncio.sleep(0.05)
+        except Exception:
+            failed += 1
+
+    await status_msg.edit_text(
+        f"✅ *Broadcast Finished!*\n\n"
+        f"• Total users: {total}\n"
+        f"• Sent successfully: {success}\n"
+        f"• Failed / Blocked: {failed}",
+        parse_mode="Markdown"
     )
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -530,7 +568,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
 
-    # SECURITY CHECK: Only allow the true ADMIN_ID to approve or reject
     if query.from_user.id != ADMIN_ID:
         await query.answer("⚠️ Access Denied: Only the bot owner can approve payments.", show_alert=True)
         return
@@ -589,6 +626,7 @@ if __name__ == "__main__":
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
+    app.add_handler(CommandHandler("broadcast", broadcast))
     app.add_handler(CallbackQueryHandler(handle_admin_action, pattern="^(app_|rej_)"))
     app.add_handler(CallbackQueryHandler(handle_callback))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
