@@ -27,6 +27,7 @@ class HealthHandler(BaseHTTPRequestHandler):
 
     def do_HEAD(self):
         self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
         self.end_headers()
 
 def run_server():
@@ -39,7 +40,6 @@ threading.Thread(target=run_server, daemon=True).start()
 # ----------------- BOT CONFIGURATION -----------------
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "9078234962:AAF7Y2UKX3hY_TXsBW6rlbaLM-vMEvYq9cc")
 MY_UPI_ID = "9187680147@ybl"
-
 ADMIN_ID = 8204483497
 DB_FILE = "bot_database.db"
 
@@ -104,6 +104,9 @@ def get_or_create_user(user_id, username, full_name, referrer_id=None):
     return row
 
 def check_user_limit(user_id):
+    if user_id == ADMIN_ID:
+        return True, "admin"
+
     today = datetime.date.today().isoformat()
     now = datetime.datetime.now()
     conn = sqlite3.connect(DB_FILE)
@@ -119,12 +122,16 @@ def check_user_limit(user_id):
 
     if tier == "premium":
         if premium_until:
-            expiry_dt = datetime.datetime.fromisoformat(premium_until)
-            if now > expiry_dt:
-                c.execute("UPDATE users SET tier = 'free', premium_until = NULL WHERE user_id = ?", (user_id,))
-                conn.commit()
-                tier = "free"
-            else:
+            try:
+                expiry_dt = datetime.datetime.fromisoformat(premium_until)
+                if now > expiry_dt:
+                    c.execute("UPDATE users SET tier = 'free', premium_until = NULL WHERE user_id = ?", (user_id,))
+                    conn.commit()
+                    tier = "free"
+                else:
+                    conn.close()
+                    return True, "premium"
+            except Exception:
                 conn.close()
                 return True, "premium"
         else:
@@ -221,9 +228,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         row = c.fetchone()
         conn.close()
 
-        tier, prem_until, daily_q, refs = row
-        rem = "Unlimited" if tier == "premium" else max(0, 1 - daily_q)
-        expiry_info = f"• VIP Active Until: `{prem_until}`" if tier == "premium" and prem_until else "• VIP: Inactive"
+        if user_id == ADMIN_ID:
+            tier, prem_until, daily_q, refs = ("premium", "Unlimited (Owner)", 0, row[3] if row else 0)
+            rem = "Unlimited"
+            expiry_info = "• Status: 👑 Bot Administrator"
+        else:
+            tier, prem_until, daily_q, refs = row
+            rem = "Unlimited" if tier == "premium" else max(0, 1 - daily_q)
+            expiry_info = f"• VIP Active Until: `{prem_until}`" if tier == "premium" and prem_until else "• VIP: Inactive"
 
         msg = (
             f"👤 *Account Status & Limits:*\n\n"
@@ -264,7 +276,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif text == "📩 CONTACT OWNER":
-        await update.message.reply_markdown("📩 *Direct Support:*\nFor manual activation or issues, contact the bot administrator directly.")
+        await update.message.reply_markdown("📩 *Direct Support:*\nFor manual activation or questions, contact the bot administrator directly.")
         return
 
     tool_prompts = {
@@ -301,22 +313,49 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["awaiting"] = None
     query = text.strip()
 
+    # 1. FIXED PINCODE LOOKUP
     if mode == "pincode":
-        res = requests.get(f"https://api.postalpincode.in/pincode/{query}").json()
-        if res and res[0].get("Status") == "Success":
-            po = res[0]["PostOffice"][0]
-            await update.message.reply_markdown(f"📮 *PIN Code {query}*\n• Office: {po.get('Name')}\n• District: {po.get('District')}\n• State: {po.get('State')}")
-        else:
-            await update.message.reply_text("❌ PIN code not found.")
+        clean_pin = "".join(filter(str.isdigit, query))
+        if len(clean_pin) != 6:
+            await update.message.reply_text("❌ Please enter a valid 6-digit PIN code (e.g. 577213).")
+            return
+        
+        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        try:
+            r = requests.get(f"https://api.postalpincode.in/pincode/{clean_pin}", headers=headers, timeout=8)
+            data = r.json()
+            if data and isinstance(data, list) and data[0].get("Status") == "Success":
+                po_list = data[0].get("PostOffice", [])
+                if po_list:
+                    po = po_list[0]
+                    names = ", ".join([p.get("Name", "") for p in po_list[:4]])
+                    await update.message.reply_markdown(
+                        f"📮 *PIN Code Details: {clean_pin}*\n"
+                        f"• *District:* {po.get('District')}\n"
+                        f"• *State:* {po.get('State')}\n"
+                        f"• *Division:* {po.get('Division', 'N/A')}\n"
+                        f"• *Post Offices:* {names}"
+                    )
+                else:
+                    await update.message.reply_text("❌ No post offices found for this PIN.")
+            else:
+                await update.message.reply_text("❌ Invalid PIN code or no records found.")
+        except Exception:
+            await update.message.reply_text("⚠️ Postal API is temporarily busy. Please retry in a moment.")
 
+    # 2. IFSC LOOKUP
     elif mode == "ifsc":
-        res = requests.get(f"https://ifsc.razorpay.com/{query.upper()}")
-        if res.status_code == 200:
-            d = res.json()
-            await update.message.reply_markdown(f"🏦 *Bank IFSC: {query.upper()}*\n• Bank: {d.get('BANK')}\n• Branch: {d.get('BRANCH')}\n• UPI Enabled: {d.get('UPI')}\n• Address: {d.get('ADDRESS')}")
-        else:
-            await update.message.reply_text("❌ IFSC code not found.")
+        try:
+            res = requests.get(f"https://ifsc.razorpay.com/{query.upper()}", timeout=8)
+            if res.status_code == 200:
+                d = res.json()
+                await update.message.reply_markdown(f"🏦 *Bank IFSC: {query.upper()}*\n• Bank: {d.get('BANK')}\n• Branch: {d.get('BRANCH')}\n• UPI Enabled: {d.get('UPI')}\n• Address: {d.get('ADDRESS')}")
+            else:
+                await update.message.reply_text("❌ IFSC code not found.")
+        except Exception:
+            await update.message.reply_text("⚠️ Bank lookup server timed out. Try again.")
 
+    # 3. GSTIN VERIFIER
     elif mode == "gstin":
         gst = query.upper()
         if len(gst) == 15:
@@ -326,19 +365,22 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Invalid GSTIN format. Must be 15 alphanumeric characters.")
 
+    # 4. RTO LOOKUP
     elif mode == "rto":
         code = query.upper().replace(" ", "")
-        location = RTO_CODES.get(code, "Unknown RTO Region / Not in database")
+        location = RTO_CODES.get(code, "Unknown RTO Region / Not in quick database")
         await update.message.reply_markdown(f"🚗 *RTO Vehicle Prefix: {code}*\n• Location: {location}")
 
+    # 5. FUEL RATES
     elif mode == "fuel":
         city = query.title()
         await update.message.reply_markdown(f"⛽ *Daily Fuel Indicator ({city})*\n• Petrol: ~₹101.90 / L\n• Diesel: ~₹87.80 / L\n*(Prices subject to local pump variance)*")
 
+    # 6. FOREX & CRYPTO
     elif mode == "forex":
         sym = query.upper()
         try:
-            r = requests.get("https://api.exchangerate-api.com/v4/latest/USD").json()
+            r = requests.get("https://api.exchangerate-api.com/v4/latest/USD", timeout=8).json()
             inr = r["rates"]["INR"]
             if sym in ["USD", "USDT"]:
                 await update.message.reply_markdown(f"💱 *1 {sym}* = ₹{inr:.2f} INR")
@@ -350,6 +392,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("❌ Exchange API currently unavailable.")
 
+    # 7. PHONE CARRIER LOOKUP
     elif mode == "carrier":
         try:
             p = phonenumbers.parse(query, None)
@@ -360,8 +403,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ Invalid phone number.")
         except Exception:
-            await update.message.reply_text("❌ Please include country code (+91).")
+            await update.message.reply_text("❌ Please include country code (e.g. +91).")
 
+    # 8. IMEI SPECS
     elif mode == "imei":
         imei = query.replace(" ", "")
         if len(imei) == 15 and imei.isdigit():
@@ -369,13 +413,18 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Invalid 15-digit IMEI.")
 
+    # 9. IP RECON
     elif mode == "ip":
-        r = requests.get(f"http://ip-api.com/json/{query}").json()
-        if r.get("status") == "success":
-            await update.message.reply_markdown(f"🌐 *Network Info ({query})*\n• IP: `{r.get('query')}`\n• ISP: {r.get('isp')}\n• ASN: {r.get('as')}\n• Country: {r.get('country')}")
-        else:
-            await update.message.reply_text("❌ Could not resolve target.")
+        try:
+            r = requests.get(f"http://ip-api.com/json/{query}", timeout=8).json()
+            if r.get("status") == "success":
+                await update.message.reply_markdown(f"🌐 *Network Info ({query})*\n• IP: `{r.get('query')}`\n• ISP: {r.get('isp')}\n• ASN: {r.get('as')}\n• Country: {r.get('country')}")
+            else:
+                await update.message.reply_text("❌ Could not resolve target IP/host.")
+        except Exception:
+            await update.message.reply_text("⚠️ IP reconnaissance service timed out.")
 
+    # 10. EMAIL AUDIT
     elif mode == "email":
         em = query.lower()
         disposable = ["tempmail.com", "10minutemail.com", "guerrillamail.com", "throwaway.com"]
@@ -386,6 +435,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         else:
             await update.message.reply_text("❌ Invalid email format.")
 
+    # 11. USERNAME SCANNER
     elif mode == "username":
         uname = query.replace("@", "")
         platforms = [
@@ -396,6 +446,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         ]
         await update.message.reply_markdown(f"🔎 *Profile Endpoints for `{uname}`:*\n\n" + "\n".join(platforms))
 
+    # 12. URL SAFETY CHECK
     elif mode == "url":
         target = query if query.startswith("http") else f"https://{query}"
         try:
@@ -404,6 +455,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception:
             await update.message.reply_text("⚠️ Target URL failed to respond or is unreachable.")
 
+    # 13. DNS LOOKUP
     elif mode == "dns":
         try:
             answers = dns.resolver.resolve(query, 'A')
@@ -470,8 +522,6 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_btns))
             except Exception as e:
                 print(f"Failed sending proof to ADMIN_ID {ADMIN_ID}: {e}")
-        else:
-            print("ADMIN_ID not configured! Screenshot was not routed to the owner.")
 
         await update.message.reply_markdown("✅ *Payment screenshot received!* It has been sent to the admin for verification.")
     else:
@@ -481,7 +531,7 @@ async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
     query = update.callback_query
 
     # SECURITY CHECK: Only allow the true ADMIN_ID to approve or reject
-    if ADMIN_ID is None or query.from_user.id != ADMIN_ID:
+    if query.from_user.id != ADMIN_ID:
         await query.answer("⚠️ Access Denied: Only the bot owner can approve payments.", show_alert=True)
         return
 
