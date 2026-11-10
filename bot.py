@@ -40,10 +40,7 @@ threading.Thread(target=run_server, daemon=True).start()
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "9078234962:AAF7Y2UKX3hY_TXsBW6rlbaLM-vMEvYq9cc")
 MY_UPI_ID = "9187680147@ybl"
 
-# Reads ADMIN_ID from Render environment variables
-ADMIN_ID_RAW = os.environ.get("ADMIN_ID", "")
-ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW.isdigit() else None
-
+ADMIN_ID = 8204483497
 DB_FILE = "bot_database.db"
 
 # ----------------- DATABASE SETUP -----------------
