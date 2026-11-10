@@ -1,18 +1,6 @@
-import os, threading
+import os
+import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
-
-class HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b'OK')
-
-def run_server():
-    port = int(os.environ.get('PORT', 10000))
-    HTTPServer(('0.0.0.0', port), HealthHandler).serve_forever()
-
-threading.Thread(target=run_server, daemon=True).start()
-
 import datetime
 import sqlite3
 import requests
@@ -29,9 +17,32 @@ from telegram.ext import (
     filters,
 )
 
-BOT_TOKEN = "9078234962:AAF7Y2UKX3hY_TXsBW6rlbaLM-vMEvYq9cc"
+# ----------------- WEB SERVER FOR UPTIMEROBOT -----------------
+class HealthHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+
+def run_server():
+    port = int(os.environ.get('PORT', 10000))
+    server = HTTPServer(('0.0.0.0', port), HealthHandler)
+    server.serve_forever()
+
+threading.Thread(target=run_server, daemon=True).start()
+
+# ----------------- BOT CONFIGURATION -----------------
+BOT_TOKEN = os.environ.get("BOT_TOKEN", "9078234962:AAF7Y2UKX3hY_TXsBW6rlbaLM-vMEvYq9cc")
 MY_UPI_ID = "9187680147@ybl"
-ADMIN_ID = None
+
+# Reads ADMIN_ID from Render environment variables
+ADMIN_ID_RAW = os.environ.get("ADMIN_ID", "")
+ADMIN_ID = int(ADMIN_ID_RAW) if ADMIN_ID_RAW.isdigit() else None
 
 DB_FILE = "bot_database.db"
 
@@ -173,11 +184,7 @@ RTO_CODES = {
 
 # ----------------- COMMAND & BUTTON HANDLERS -----------------
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global ADMIN_ID
     user = update.effective_user
-    if ADMIN_ID is None:
-        ADMIN_ID = user.id
-
     referrer = None
     if context.args and context.args[0].startswith("ref_"):
         try:
@@ -200,7 +207,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     get_or_create_user(user_id, username, full_name)
 
-    # Main Navigation
     if text == "🛠 PUBLIC UTILITIES":
         await update.message.reply_markdown("📂 *Select a Public Utility Service:*", reply_markup=ReplyKeyboardMarkup(MENU_UTILITY, resize_keyboard=True))
         return
@@ -211,7 +217,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_markdown("🏠 *Returned to Main Menu:*", reply_markup=ReplyKeyboardMarkup(MENU_MAIN, resize_keyboard=True))
         return
 
-    # Account & Growth
     elif text == "📊 MY ACCOUNT STATUS":
         conn = sqlite3.connect(DB_FILE)
         c = conn.cursor()
@@ -240,7 +245,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         msg = (
             f"🎁 *Invite Friends & Get Free VIP!*\n\n"
             f"Share your referral link with friends or channels:\n`{ref_link}`\n\n"
-            "✨ *Reward:* For every **3 friends** who join via your link, you automatically get **1 Day of VIP Premium** for free!"
+            f"✨ *Reward:* For every **3 friends** who join via your link, you automatically get **1 Day of VIP Premium** for free!"
         )
         await update.message.reply_markdown(msg)
         return
@@ -262,10 +267,9 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     elif text == "📩 CONTACT OWNER":
-        await update.message.reply_markdown(f"📩 *Direct Support:*\nFor manual activation or issues, contact the bot administrator directly.")
+        await update.message.reply_markdown("📩 *Direct Support:*\nFor manual activation or issues, contact the bot administrator directly.")
         return
 
-    # Trigger Tool Inputs
     tool_prompts = {
         "📍 PINCODE LOOKUP": ("pincode", "📍 Enter a 6-digit Indian PIN code (e.g. `577213`):"),
         "💳 IFSC LOOKUP": ("ifsc", "💳 Enter an 11-digit Bank IFSC code (e.g. `SBIN0000847`):"),
@@ -292,7 +296,6 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_markdown(prompt_msg)
         return
 
-    # Execute Lookup Queries
     mode = context.user_data.get("awaiting")
     if not mode:
         await update.message.reply_text("Please choose an option from the menu.")
@@ -347,7 +350,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_markdown(f"💱 *1 {sym}* = ₹{val:.2f} INR")
             else:
                 await update.message.reply_text("Currency not recognized.")
-        except Exception as e:
+        except Exception:
             await update.message.reply_text("❌ Exchange API currently unavailable.")
 
     elif mode == "carrier":
@@ -359,7 +362,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_markdown(f"📞 *Carrier Info:*\n• Valid: ✅\n• Operator: {c_name}\n• Circle: {reg}")
             else:
                 await update.message.reply_text("❌ Invalid phone number.")
-        except Exception as e:
+        except Exception:
             await update.message.reply_text("❌ Please include country code (+91).")
 
     elif mode == "imei":
@@ -401,7 +404,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             r = requests.head(target, allow_redirects=True, timeout=5)
             await update.message.reply_markdown(f"🛡 *URL Audit:*\n• Final URL: `{r.url}`\n• HTTP Status: `{r.status_code}`\n• Status: ✅ Reachable")
-        except Exception as e:
+        except Exception:
             await update.message.reply_text("⚠️ Target URL failed to respond or is unreachable.")
 
     elif mode == "dns":
@@ -409,7 +412,7 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
             answers = dns.resolver.resolve(query, 'A')
             ips = [rdata.to_text() for rdata in answers]
             await update.message.reply_markdown(f"📡 *DNS A-Records for `{query}`:*\n" + "\n".join([f"• `{ip}`" for ip in ips]))
-        except Exception as e:
+        except Exception:
             await update.message.reply_text("❌ Could not resolve DNS records for this domain.")
 
 # ----------------- PAYMENT CALLBACKS & PROOFS -----------------
@@ -466,7 +469,12 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
         caption = f"🔔 *PAYMENT RECEIVED!*\n\n• User: {user_name} (@{username})\n• ID: `{user_id}`\n• Plan: ₹{plan}"
 
         if ADMIN_ID:
-            await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_btns))
+            try:
+                await context.bot.send_photo(chat_id=ADMIN_ID, photo=photo_id, caption=caption, reply_markup=InlineKeyboardMarkup(admin_btns))
+            except Exception as e:
+                print(f"Failed sending proof to ADMIN_ID {ADMIN_ID}: {e}")
+        else:
+            print("ADMIN_ID not configured! Screenshot was not routed to the owner.")
 
         await update.message.reply_markdown("✅ *Payment screenshot received!* It has been sent to the admin for verification.")
     else:
@@ -474,8 +482,13 @@ async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer()
 
+    # SECURITY CHECK: Only allow the true ADMIN_ID to approve or reject
+    if ADMIN_ID is None or query.from_user.id != ADMIN_ID:
+        await query.answer("⚠️ Access Denied: Only the bot owner can approve payments.", show_alert=True)
+        return
+
+    await query.answer()
     data = query.data
     now = datetime.datetime.now()
 
@@ -499,6 +512,13 @@ async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.close()
 
         await query.edit_message_caption(caption=f"✅ *Approved!* User `{target_uid}` is now VIP ({plan}).")
+        try:
+            await context.bot.send_message(
+                chat_id=target_uid,
+                text=f"🎉 *Payment Verified!*\nYour account has been upgraded to VIP Premium for {days} days. Enjoy unlimited searches!"
+            )
+        except Exception as e:
+            print(f"Failed sending approval message to user: {e}")
 
     elif data.startswith("rej_"):
         target_uid = int(data.split("_")[1])
@@ -508,15 +528,14 @@ async def handle_admin_action(update: Update, context: ContextTypes.DEFAULT_TYPE
         conn.commit()
         conn.close()
 
-        await query.edit_message_caption(caption=f"✅ *Approved!* User `{target_uid}` is now VIP ({plan}).")
+        await query.edit_message_caption(caption=f"❌ *Rejected!* Request for user `{target_uid}` was declined.")
         try:
             await context.bot.send_message(
                 chat_id=target_uid,
-                text="❌ *Payment Rejected.* Verification could not be completed. Contact the owner via 📩 CONTACT OWNER.",
-                # parse_mode removed
+                text="❌ *Payment Rejected.*\nVerification could not be completed. Contact the owner via 📩 CONTACT OWNER."
             )
         except Exception as e:
-            print(f"Failed sending approval message to user: {e}")
+            print(f"Failed sending rejection message to user: {e}")
 
 # ----------------- MAIN INITIALIZER -----------------
 if __name__ == "__main__":
@@ -528,5 +547,5 @@ if __name__ == "__main__":
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
 
-    print("Multi-Utility OSINT & Billing Engine Bot is online on Kali Linux...")
+    print("Bot is starting polling...")
     app.run_polling()
